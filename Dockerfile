@@ -13,7 +13,9 @@ RUN chmod -R g+w /builder
 USER 1001
 
 # Install package to a writable location with proper permissions
-RUN pip install --user .
+RUN pip install --prefix=/tmp/pip-install . && \
+    mkdir -p /opt/app-root/lib/python3.12/site-packages/ && \
+    cp -r /tmp/pip-install/lib/python3.12/site-packages/* /opt/app-root/lib/python3.12/site-packages/ || true
 
 # ---- mails ----
 FROM registry.redhat.io/ubi9/nodejs-20 AS mail-builder
