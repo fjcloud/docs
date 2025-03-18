@@ -21,7 +21,9 @@ COPY ./src/mail /mail/app
 
 WORKDIR /mail/app
 
-RUN yarn install --frozen-lockfile && \
+# Install yarn first
+RUN npm install -g yarn && \
+    yarn install --frozen-lockfile && \
     yarn build
 
 # ---- static link collector ----
