@@ -1,7 +1,7 @@
 # Django impress
 
 # ---- base image to inherit from ----
-FROM python:3.12-ubi9 AS base
+FROM registry.redhat.io/ubi9/python-312 AS base
 
 # ---- Back-end builder image ----
 FROM base AS back-builder
@@ -15,7 +15,7 @@ RUN mkdir /install && \
   pip install --prefix=/install .
 
 # ---- mails ----
-FROM nodejs:20-ubi9-minimal AS mail-builder
+FROM registry.redhat.io/ubi9/nodejs-20 AS mail-builder
 
 COPY ./src/mail /mail/app
 
