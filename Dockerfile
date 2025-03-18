@@ -1,14 +1,7 @@
 # Django impress
 
 # ---- base image to inherit from ----
-FROM python:3.12.6-alpine3.20 AS base
-
-# Upgrade pip to its latest release to speed up dependencies installation
-#RUN python -m pip install --upgrade pip setuptools
-
-# Upgrade system packages to install security updates
-RUN apk update && \
-  apk upgrade
+FROM python:3.12-ubi9 AS base
 
 # ---- Back-end builder image ----
 FROM base AS back-builder
@@ -21,9 +14,8 @@ COPY ./src/backend /builder
 RUN mkdir /install && \
   pip install --prefix=/install .
 
-
 # ---- mails ----
-FROM node:20 AS mail-builder
+FROM nodejs:20-ubi9-minimal AS mail-builder
 
 COPY ./src/mail /mail/app
 
@@ -32,16 +24,12 @@ WORKDIR /mail/app
 RUN yarn install --frozen-lockfile && \
     yarn build
 
-
 # ---- static link collector ----
 FROM base AS link-collector
 ARG IMPRESS_STATIC_ROOT=/data/static
 
-# Install pango & rdfind
-RUN apk add \
-  pango \
-  rdfind
-
+# Install pango
+RUN dnf install -y pango
 # Copy installed python dependencies
 COPY --from=back-builder /install /usr/local
 
@@ -54,24 +42,17 @@ WORKDIR /app
 RUN DJANGO_CONFIGURATION=Build \
     python manage.py collectstatic --noinput
 
-# Replace duplicated file by a symlink to decrease the overall size of the
-# final image
-RUN rdfind -makesymlinks true -followsymlinks true -makeresultsfile false ${IMPRESS_STATIC_ROOT}
-
 # ---- Core application image ----
 FROM base AS core
 
 ENV PYTHONUNBUFFERED=1
 
 # Install required system libs
-RUN apk add \
+RUN dnf install -y \
   cairo \
-  file \
-  font-noto \
-  font-noto-emoji \
   gettext \
-  gdk-pixbuf \
-  libffi-dev \
+  gdk-pixbuf2 \
+  libffi-devel \
   pango \
   shared-mime-info
 
