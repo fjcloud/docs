@@ -2,15 +2,20 @@
 set -eo pipefail
 
 # OpenShift runs containers with a random UID and the GID of 0 (root)
-if ! whoami &> /dev/null; then
-  # If we can't get the current user, we need to add an entry to /etc/passwd
-  if [ -w /etc/passwd ]; then
-    echo "${USER_NAME:-default}:x:$(id -u):0:${USER_NAME:-default} user:${HOME}:/sbin/nologin" >> /etc/passwd
-  fi
-fi
+# Standard paths for OpenShift images
+export HOME=/opt/app-root/src
+export PATH=$HOME/bin:$PATH
 
 # Make sure any newly created files are group-writable
 umask 0002
+
+# Set Django environment variables if not already set
+IMPRESS_STATIC_ROOT=${IMPRESS_STATIC_ROOT:-/opt/app-root/static}
+IMPRESS_MEDIA_ROOT=${IMPRESS_MEDIA_ROOT:-/opt/app-root/media}
+
+# Ensure directories exist with correct permissions
+mkdir -p $IMPRESS_STATIC_ROOT $IMPRESS_MEDIA_ROOT
+chmod -R g+w $IMPRESS_STATIC_ROOT $IMPRESS_MEDIA_ROOT
 
 # Run the command
 exec "$@"
