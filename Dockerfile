@@ -7,8 +7,11 @@ FROM base AS back-builder
 WORKDIR /builder
 # Copy required python dependencies
 COPY ./src/backend /builder
-RUN mkdir /install && \
-  pip install --prefix=/install .
+# Create install directory with proper permissions for OpenShift
+RUN mkdir -p /tmp/install && \
+  pip install --prefix=/tmp/install . && \
+  mkdir -p /install && \
+  cp -r /tmp/install/* /install/ || true
 
 # ---- mails ----
 FROM registry.redhat.io/ubi9/nodejs-20 AS mail-builder
@@ -48,7 +51,7 @@ RUN dnf install -y \
 RUN wget https://svn.apache.org/repos/asf/httpd/httpd/trunk/docs/conf/mime.types -O /etc/mime.types
 
 # Copy entrypoint
-COPY entrypoint /usr/local/bin/entrypoint
+COPY ./docker/files/usr/local/bin/entrypoint /usr/local/bin/entrypoint
 
 # Give the root group the same permissions as the root user on directories
 # OpenShift runs containers with a random UID and GID of 0 (root group)
