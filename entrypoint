@@ -1,0 +1,16 @@
+#!/bin/bash
+set -eo pipefail
+
+# OpenShift runs containers with a random UID and the GID of 0 (root)
+if ! whoami &> /dev/null; then
+  # If we can't get the current user, we need to add an entry to /etc/passwd
+  if [ -w /etc/passwd ]; then
+    echo "${USER_NAME:-default}:x:$(id -u):0:${USER_NAME:-default} user:${HOME}:/sbin/nologin" >> /etc/passwd
+  fi
+fi
+
+# Make sure any newly created files are group-writable
+umask 0002
+
+# Run the command
+exec "$@"
