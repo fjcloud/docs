@@ -4,17 +4,20 @@ FROM registry.redhat.io/ubi9/python-312 AS base
 
 # ---- Back-end builder image ----
 FROM base AS back-builder
+USER 0
 WORKDIR /builder
 # Copy required python dependencies
 COPY ./src/backend /builder
 # Fix permissions for OpenShift
 RUN chmod -R g+w /builder
+USER 1001
 
 # Install package to a writable location with proper permissions
 RUN pip install --user .
 
 # ---- mails ----
 FROM registry.redhat.io/ubi9/nodejs-20 AS mail-builder
+USER 0
 # Create directories with proper permissions
 RUN mkdir -p /mail/app && \
     chmod -R g+w /mail/app
@@ -24,6 +27,7 @@ WORKDIR /mail/app
 
 # Fix permissions for OpenShift
 RUN chmod -R g+w /mail/app
+USER 1001
 
 # Install yarn and build
 RUN npm install -g yarn && \
@@ -44,13 +48,17 @@ RUN dnf install -y pango
 USER 1001
 
 # Create the static directory with proper permissions
+USER 0
 RUN mkdir -p ${IMPRESS_STATIC_ROOT} && \
     chmod -R g+w ${IMPRESS_STATIC_ROOT}
+USER 1001
 
 # Copy impress application
 COPY ./src/backend /app/
 # Fix permissions
+USER 0
 RUN chmod -R g+w /app
+USER 1001
 
 # Copy installed python dependencies from back-builder
 COPY --from=back-builder /opt/app-root/lib/python3.12/site-packages /opt/app-root/lib/python3.12/site-packages
