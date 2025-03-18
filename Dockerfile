@@ -7,107 +7,151 @@ FROM base AS back-builder
 WORKDIR /builder
 # Copy required python dependencies
 COPY ./src/backend /builder
-# Create install directory with proper permissions for OpenShift
-RUN mkdir -p /tmp/install && \
-  pip install --prefix=/tmp/install . && \
-  mkdir -p /install && \
-  cp -r /tmp/install/* /install/ || true
+# Fix permissions for OpenShift
+RUN chmod -R g+w /builder
+
+# Install package to a writable location with proper permissions
+RUN pip install --user .
 
 # ---- mails ----
 FROM registry.redhat.io/ubi9/nodejs-20 AS mail-builder
+# Create directories with proper permissions
+RUN mkdir -p /mail/app && \
+    chmod -R g+w /mail/app
+    
 COPY ./src/mail /mail/app
 WORKDIR /mail/app
-# Install yarn first
+
+# Fix permissions for OpenShift
+RUN chmod -R g+w /mail/app
+
+# Install yarn and build
 RUN npm install -g yarn && \
-    yarn install --frozen-lockfile && \
-    yarn build
+    mkdir -p /opt/app-root/src/.cache && \
+    mkdir -p /mail/app/node_modules && \
+    chmod -R g+w /opt/app-root/src/.cache && \
+    chmod -R g+w /mail/app/node_modules && \
+    HOME=/opt/app-root/src yarn install --frozen-lockfile && \
+    HOME=/opt/app-root/src yarn build
 
 # ---- static link collector ----
 FROM base AS link-collector
-ARG IMPRESS_STATIC_ROOT=/data/static
+ARG IMPRESS_STATIC_ROOT=/opt/app-root/static
+
 # Install pango
+USER 0
 RUN dnf install -y pango
-# Copy installed python dependencies
-COPY --from=back-builder /install /usr/local
-# Copy impress application (see .dockerignore)
+USER 1001
+
+# Create the static directory with proper permissions
+RUN mkdir -p ${IMPRESS_STATIC_ROOT} && \
+    chmod -R g+w ${IMPRESS_STATIC_ROOT}
+
+# Copy impress application
 COPY ./src/backend /app/
+# Fix permissions
+RUN chmod -R g+w /app
+
+# Copy installed python dependencies from back-builder
+COPY --from=back-builder /opt/app-root/lib/python3.12/site-packages /opt/app-root/lib/python3.12/site-packages
+
 WORKDIR /app
+
 # collectstatic
 RUN DJANGO_CONFIGURATION=Build \
+    IMPRESS_STATIC_ROOT=${IMPRESS_STATIC_ROOT} \
     python manage.py collectstatic --noinput
 
 # ---- Core application image ----
 FROM base AS core
 ENV PYTHONUNBUFFERED=1
+
 # Install required system libs
+USER 0
 RUN dnf install -y \
   cairo \
   gettext \
   gdk-pixbuf2 \
   libffi-devel \
   pango \
-  shared-mime-info \
-  postgresql-client
+  postgresql-client \
+  shared-mime-info
+USER 1001
+
+# Get mime types
+USER 0
 RUN wget https://svn.apache.org/repos/asf/httpd/httpd/trunk/docs/conf/mime.types -O /etc/mime.types
+USER 1001
+
+# Create required directories with proper permissions
+ARG IMPRESS_STATIC_ROOT=/opt/app-root/static
+ARG IMPRESS_MEDIA_ROOT=/opt/app-root/media
+USER 0
+RUN mkdir -p ${IMPRESS_STATIC_ROOT} ${IMPRESS_MEDIA_ROOT} && \
+    chmod -R g+w ${IMPRESS_STATIC_ROOT} ${IMPRESS_MEDIA_ROOT}
+USER 1001
 
 # Copy entrypoint
-COPY ./docker/files/usr/local/bin/entrypoint /usr/local/bin/entrypoint
+COPY ./docker/files/usr/local/bin/entrypoint /opt/app-root/bin/entrypoint
+USER 0
+RUN chmod +x /opt/app-root/bin/entrypoint
+USER 1001
 
-# Give the root group the same permissions as the root user on directories
-# OpenShift runs containers with a random UID and GID of 0 (root group)
-RUN chmod g=u /etc/passwd && \
-    mkdir -p /data/static /data/media && \
-    chmod -R g=u /data && \
-    chmod -R g=u /app
+# Copy installed python dependencies from back-builder
+COPY --from=back-builder /opt/app-root/lib/python3.12/site-packages /opt/app-root/lib/python3.12/site-packages
 
-# Copy installed python dependencies
-COPY --from=back-builder /install /usr/local
-
-# Copy impress application (see .dockerignore)
+# Copy impress application
 COPY ./src/backend /app/
+# Fix permissions
+USER 0
+RUN chmod -R g+w /app
+USER 1001
+
 WORKDIR /app
 
 # Generate compiled translation messages
 RUN DJANGO_CONFIGURATION=Build \
     python manage.py compilemessages
 
-# We wrap commands run in this container by the following entrypoint that
-# creates a user on-the-fly with the container user ID and root group ID.
-ENTRYPOINT [ "/usr/local/bin/entrypoint" ]
+# We use the provided entrypoint script
+ENTRYPOINT [ "/opt/app-root/bin/entrypoint" ]
 
 # ---- Development image ----
 FROM core AS backend-development
 
-# Uninstall impress and re-install it in editable mode along with development
-# dependencies
-RUN pip uninstall -y impress
-RUN pip install -e .[dev]
+# Install development dependencies
+RUN pip install -e /app[dev]
 
-# Target database host (e.g. database engine following docker compose services
-# name) & port
+# Target database host
 ENV DB_HOST=postgresql \
-    DB_PORT=5432
+    DB_PORT=5432 \
+    IMPRESS_STATIC_ROOT=/opt/app-root/static \
+    IMPRESS_MEDIA_ROOT=/opt/app-root/media
 
 # Run django development server
 CMD ["python", "manage.py", "runserver", "0.0.0.0:8000"]
 
 # ---- Production image ----
 FROM core AS backend-production
-ARG IMPRESS_STATIC_ROOT=/data/static
+ARG IMPRESS_STATIC_ROOT=/opt/app-root/static
+ARG IMPRESS_MEDIA_ROOT=/opt/app-root/media
+
+# Set environment variables
+ENV IMPRESS_STATIC_ROOT=${IMPRESS_STATIC_ROOT} \
+    IMPRESS_MEDIA_ROOT=${IMPRESS_MEDIA_ROOT}
 
 # Gunicorn
-RUN mkdir -p /usr/local/etc/gunicorn
-COPY docker/files/usr/local/etc/gunicorn/impress.py /usr/local/etc/gunicorn/impress.py
+RUN mkdir -p /opt/app-root/etc/gunicorn
+COPY docker/files/usr/local/etc/gunicorn/impress.py /opt/app-root/etc/gunicorn/impress.py
 
 # Copy statics
 COPY --from=link-collector ${IMPRESS_STATIC_ROOT} ${IMPRESS_STATIC_ROOT}
 
 # Copy impress mails
 COPY --from=mail-builder /mail/backend/core/templates/mail /app/core/templates/mail
-
-# Make sure permissions are set correctly for OpenShift
-RUN chgrp -R 0 /app ${IMPRESS_STATIC_ROOT} && \
-    chmod -R g=u /app ${IMPRESS_STATIC_ROOT}
+USER 0
+RUN chmod -R g+w /app/core/templates/mail
+USER 1001
 
 # The default command runs gunicorn WSGI server in impress's main module
-CMD ["gunicorn", "-c", "/usr/local/etc/gunicorn/impress.py", "impress.wsgi:application"]
+CMD ["gunicorn", "-c", "/opt/app-root/etc/gunicorn/impress.py", "impress.wsgi:application"]
